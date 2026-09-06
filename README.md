@@ -5,6 +5,9 @@ Microscopic Simulation and Swarm-Based Cooperative Behaviour of  Autonomous Vehi
 1. SUMO User Documentation: https://sumo.dlr.de/docs/index.html
 2. SUMO Tutorials: https://sumo.dlr.de/docs/Tutorials/index.html
 
+# Research Papers referred
+1. Zaky, Muhammad. Urban Traffic Simulation Using SUMO Open Source Tools.
+
 # Tools Used
 
 1. SUMO
