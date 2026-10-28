@@ -1,6 +1,13 @@
 # micro-moe
 Microscopic Simulation and Swarm-Based Cooperative Behaviour of  Autonomous Vehicles in Urban ITS
 
+# Problem Statement
+
+To study effect of AV penetration (0/25/50/75/100%) on
+delay, average speed, travel time and queue length, simulated on a real
+Midtown Manhattan network from OpenStreetMap, repeated over many random seeds
+to build a research dataset.
+
 # Documentation Used
 1. SUMO User Documentation: https://sumo.dlr.de/docs/index.html
 2. SUMO Tutorials: https://sumo.dlr.de/docs/Tutorials/index.html
@@ -68,6 +75,80 @@ av_penetration/             the pipeline: network, demand, simulation, sweep, MA
 2. `pip install -r requirements.txt` (use a virtual environment, not a conda/ROS base environment).
 3. Try [`sumo_tutorial/`](sumo_tutorial/) to check the install end to end.
 4. Reproduce AV Penetration following [`av_penetration/README.md`](av_penetration/README.md).
+
+## One-time setup
+```bash
+./generate_network.sh        # downloads OSM data, writes manhattan.net.xml
+```
+(Falls back to other Overpass mirrors if the main server times out. Edit `BBOX`
+in the script to change the area.)
+
+## Build the dataset
+```bash
+python sweep.py --seeds 2 --workers 2     # quick test: 10 runs
+python sweep.py                           # full: 200 seeds x 5 rates = 1000 runs
+```
+- `--workers N` runs N simulations in parallel (default: half your CPU cores).
+- Resumable: Ctrl+C any time, then re-run the same command to continue.
+  Finished runs are skipped; failed runs are retried.
+- `--periods 3.0 2.0 1.5` repeats everything at several traffic densities
+  (lower period = denser traffic). Multiplies the run count.
+- `--keep-files` keeps routes + tripinfo XML for every run (very large).
+- `--aggregate-only` rebuilds the CSV from finished runs without simulating.
+- Output: `ps1_dataset.csv`, one row per run (seed, period, penetration, the
+  four metrics, completed/unfinished trips, collisions, runtime).
+
+Estimating total time: (runtime of one run) x (number of runs) / workers.
+Use the quick test above to get the one-run time before launching the full job.
+
+## Compare driver models (human + AV)
+`vehicle_models.py` defines the car-following model sets: `krauss` (your original
+200-seed baseline), `idm_acc`, `eidm_acc` (human = IDM / Extended IDM, AV = ACC)
+and `idm_cacc` (AV = CACC, experimental). Read its header for exactly what is
+held equal and which numbers are cited.
+```bash
+python sweep.py --seeds 2 --workers 2 --model-sets idm_acc            # quick test
+python sweep.py --seeds 50 --model-sets idm_acc eidm_acc idm_cacc     # the comparison
+python sweep.py --seeds 50 --model-sets idm_acc --av-tau 1.0          # AV headway sensitivity
+python sweep.py --seeds 50 --model-sets idm_cacc --step-length 0.25   # if CACC collides
+```
+- Existing Krauss runs are reused, not re-run. Seeds 1..N have the same trips
+  and the same AV assignment in every model set, so models compare seed-by-seed.
+- Anything non-default (`--av-tau`, `--step-length`) becomes its own labelled
+  variant (e.g. `idm_acc_avtau1`), so variants never mix with the default runs.
+- Keep `--step-length` identical across the models you compare, and check the
+  `collisions` and `unfinished_trips` columns before trusting a model set.
+
+## Analyze (MATLAB)
+`cd` into the project folder, then run `analyze.m`. It produces, per traffic
+density: one figure per metric with all model sets overlaid (mean ± 95% CI), box
+plots per model in `figures/`, plus
+`summary.csv` (n, mean, sd, CI, paired difference vs 0% AV with its CI,
+% change, p-value label). Changes vs. the 0% baseline are *paired by seed*.
+
+## Scripts
+| File | Purpose |
+|---|---|
+| `generate_network.sh` | OSM download + `netconvert` -> `manhattan.net.xml` |
+| `generate_routes.py` | random trips (`randomTrips.py`) + AV/human type assignment |
+| `run_scenario.py` | one SUMO run over TraCI; outputs the four metrics + diagnostics |
+| `vehicle_models.py` | car-following model sets (human / AV vehicle types) |
+| `sweep.py` | parallel, resumable multi-seed, multi-model sweep -> `dataset.csv` |
+| `analyze.m` | MATLAB statistics + figures |
+
+## Method notes for the paper
+- Vehicle types: see `vehicle_models.py`. Krauss set: human = Level 0, AV = Level 5,
+  Sadid & Antoniou (2023), Table 4. ACC/CACC sets: AV headway 1.3 s after Syed &
+  Hasan; controller gains left at SUMO defaults
+  (Milanes & Shladover 2014; Xiao et al. 2017). A conservative Krauss alternative
+  (Amini et al. 2023, arXiv:2301.11083) is noted in `vehicle_models.py`.
+- Delay = SUMO `timeLoss`; travel time = `duration`; both averaged over completed
+  trips. Queue = halted vehicles summed over all edges, averaged over time.
+- Simulation step 0.5 s (Krauss can collide when tau < step; AV tau = 0.6 s).
+  Hard stop at 3600 s; check `unfinished_trips` and `collisions` columns.
+- Seed `s` fixes the trip demand AND the AV assignment draws, so AV sets are
+  nested across penetration rates and every seed is a matched comparison.
+- Report the traffic density (`--period`) and network area in the methodology.
 
 ## Reproducibility notes
 
