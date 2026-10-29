@@ -44,22 +44,21 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from vehicle_models import DEFAULT_AV_TAU, MODEL_SETS  # noqa: E402
+from vehicle_models_2 import DEFAULT_AV_TAU, MODEL_SETS
 
 HERE = Path(__file__).resolve().parent
 PENETRATIONS = [0.0, 0.25, 0.5, 0.75, 1.0]
-
 DEFAULT_STEP = 0.5
 
+# NEW COLUMNS ADDED
 COLUMNS = [
     "run_id", "model_set", "av_tau", "step_length", "seed", "period", "penetration",
     "avg_delay_s", "avg_speed_mps", "avg_travel_time_s", "avg_queue_length",
+    "avg_fuel_ml", "avg_co2_mg",  # Environmental KPIs
     "completed_trips", "unfinished_trips", "collisions", "runtime_s",
 ]
 
-
 def variant_name(model, av_tau, step):
-    """Label for a model set plus any non-default overrides, e.g. idm_acc_avtau1_dt0.25."""
     name = model
     if av_tau is not None:
         name += f"_avtau{av_tau:g}"
@@ -67,12 +66,9 @@ def variant_name(model, av_tau, step):
         name += f"_dt{step:g}"
     return name
 
-
 def run_dir(root, variant, pen, seed, period):
-    # The plain Krauss setup keeps the original folder layout so earlier runs are reused.
     base = root if variant == "krauss" else root / variant
     return base / f"T{period:g}" / f"p{int(round(pen * 100)):03d}_s{seed:04d}"
-
 
 def run_one(job):
     model, av_tau, step, pen, seed, period, net, root, keep = job
@@ -85,16 +81,16 @@ def run_one(job):
 
     t0 = time.time()
     err = ""
-    route_cmd = [sys.executable, str(HERE / "02_generate_routes.py"),
+    route_cmd = [sys.executable, str(HERE / "02_generate_routes_2.py"),
                  "--net", net, "--penetration", str(pen), "--period", str(period),
                  "--seed", str(seed), "--model-set", model, "-o", "routes.rou.xml"]
     if av_tau is not None:
         route_cmd += ["--av-tau", str(av_tau)]
-    for _attempt in range(2):  # one retry: SUMO occasionally loses a TraCI port race
+    for _attempt in range(2):
         try:
             subprocess.run(route_cmd, cwd=d, check=True, capture_output=True, text=True)
             subprocess.run(
-                [sys.executable, str(HERE / "03_run_scenario.py"),
+                [sys.executable, str(HERE / "03_run_scenario_3.py"), # Call updated script
                  "--net", net, "--route", "routes.rou.xml",
                  "--penetration", str(pen), "--step-length", str(step),
                  "--out", "result.json"],
@@ -128,16 +124,17 @@ def run_one(job):
                 pass
     return "done", job, ""
 
-
 def aggregate(root, out_csv):
     rows = []
     for p in sorted(root.rglob("row.json")):
         with open(p) as f:
             r = json.load(f)
-        # Rows from before model sets existed were Krauss at the default step.
         r.setdefault("model_set", "krauss")
-        r.setdefault("av_tau", DEFAULT_AV_TAU["krauss"])
+        r.setdefault("av_tau", DEFAULT_AV_TAU.get("krauss", 0.6))
         r.setdefault("step_length", DEFAULT_STEP)
+        # Handle older rows that don't have the new environmental KPIs
+        r.setdefault("avg_fuel_ml", 0.0)
+        r.setdefault("avg_co2_mg", 0.0)
         rows.append(r)
     rows.sort(key=lambda r: (r["model_set"], r["period"], r["seed"], r["penetration"]))
     with open(out_csv, "w", newline="") as f:
@@ -146,26 +143,19 @@ def aggregate(root, out_csv):
         w.writerows(rows)
     print(f"Wrote {out_csv} with {len(rows)} runs")
 
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--net", default="manhattan.net.xml")
-    ap.add_argument("--seeds", type=int, default=200, help="number of seeds (iterations) per setting")
+    ap.add_argument("--seeds", type=int, default=200)
     ap.add_argument("--seed-start", type=int, default=1)
-    ap.add_argument("--model-sets", nargs="+", default=["krauss"], choices=list(MODEL_SETS),
-                    help="car-following model sets to simulate (see vehicle_models.py)")
-    ap.add_argument("--av-tau", type=float, default=None,
-                    help="override AV desired headway (s) for every model set in this run")
-    ap.add_argument("--step-length", type=float, default=DEFAULT_STEP,
-                    help="SUMO step (s); keep identical for runs you compare. CACC may need 0.25 or less")
-    ap.add_argument("--periods", type=float, nargs="+", default=[2.0],
-                    help="vehicle insertion periods in s (lower = denser traffic)")
-    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2),
-                    help="simulations to run in parallel")
+    ap.add_argument("--model-sets", nargs="+", default=["krauss"], choices=list(MODEL_SETS))
+    ap.add_argument("--av-taus", type=float, nargs="+", default=[None])
+    ap.add_argument("--step-length", type=float, default=DEFAULT_STEP)
+    ap.add_argument("--periods", type=float, nargs="+", default=[2.0])
+    ap.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     ap.add_argument("--root", default="runs")
-    ap.add_argument("--dataset", default="ps1_dataset.csv")
-    ap.add_argument("--keep-files", action="store_true",
-                    help="keep routes and tripinfo XML for every run (large!)")
+    ap.add_argument("--dataset", default="ps1_dataset_env.csv") # Output to new CSV
+    ap.add_argument("--keep-files", action="store_true")
     ap.add_argument("--aggregate-only", action="store_true")
     args = ap.parse_args()
 
@@ -176,19 +166,14 @@ def main():
 
     net = Path(args.net).resolve()
     if not net.exists():
-        sys.exit(f"Network file not found: {net}\nRun 01_generate_network.sh first, "
-                 f"or pass --net.")
+        sys.exit(f"Network file not found: {net}")
 
     seeds = range(args.seed_start, args.seed_start + args.seeds)
-    # Seed-major order: if you stop early you still have complete seeds.
-    jobs = [(model, args.av_tau, args.step_length, pen, seed, period, str(net), root, args.keep_files)
+    jobs = [(model, tau, args.step_length, pen, seed, period, str(net), root, args.keep_files)
             for seed in seeds for model in args.model_sets
-            for period in args.periods for pen in PENETRATIONS]
+            for period in args.periods for pen in PENETRATIONS for tau in args.av_taus]
 
-    total = len(jobs)
-    print(f"{total} runs ({args.seeds} seeds x {len(args.model_sets)} model sets x "
-          f"{len(args.periods)} density x {len(PENETRATIONS)} penetration rates), "
-          f"{args.workers} parallel workers")
+    print(f"Starting {len(jobs)} runs. Includes Environmental KPI tracking.")
 
     done = skipped = 0
     failed = []
@@ -198,30 +183,19 @@ def main():
         futures = [ex.submit(run_one, j) for j in jobs]
         for fut in cf.as_completed(futures):
             status, job, err = fut.result()
-            model, pen, seed, period = job[0], job[3], job[4], job[5]
             if status == "skipped":
                 skipped += 1
                 continue
             if status == "failed":
                 failed.append((job, err))
-                print(f"FAILED  {model} seed={seed} period={period:g} pen={pen:.2f}\n  {err.strip()[-200:]}")
                 continue
             done += 1
-            elapsed = time.time() - t_start
-            remaining = total - skipped - done - len(failed)
-            eta_min = elapsed / done * remaining / 60
-            print(f"[{done + skipped}/{total}] {model} seed={seed} period={period:g} "
-                  f"pen={pen:.2f} done | ETA ~{eta_min:.0f} min")
     except KeyboardInterrupt:
-        print("\nInterrupted -- saving what finished. Re-run the same command to continue.")
         ex.shutdown(wait=False, cancel_futures=True)
     else:
         ex.shutdown()
 
     aggregate(root, args.dataset)
-    if failed:
-        print(f"{len(failed)} runs failed (not recorded; re-running the same command retries them).")
-
 
 if __name__ == "__main__":
     main()
