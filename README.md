@@ -164,11 +164,6 @@ plots per model in `figures/`, plus
 | `analyze.m` | MATLAB statistics + figures |
 
 # Method notes for the paper
-- Vehicle types: see `vehicle_models.py`. Krauss set: human = Level 0, AV = Level 5,
-  Sadid & Antoniou (2023), Table 4. ACC/CACC sets: AV headway 1.3 s after Syed &
-  Hasan; controller gains left at SUMO defaults
-  (Milanes & Shladover 2014; Xiao et al. 2017). A conservative Krauss alternative
-  (Amini et al. 2023, arXiv:2301.11083) is noted in `vehicle_models.py`.
 - Delay = SUMO `timeLoss`; travel time = `duration`; both averaged over completed
   trips. Queue = halted vehicles summed over all edges, averaged over time.
 - Simulation step 0.5 s (Krauss can collide when tau < step; AV tau = 0.6 s).
