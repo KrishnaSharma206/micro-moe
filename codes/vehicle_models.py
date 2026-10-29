@@ -5,50 +5,27 @@ Each model set defines the SUMO vehicle types for the two driver classes:
   human : the human-driven vehicle type (id "human")
   AV    : the automated vehicle type (id "AV")
 
-Set            human model   AV model   notes
--------------  ------------  ---------  --------------------------------------
-krauss         Krauss        Krauss     Original setup. Parameters from Sadid &
-                                        Antoniou (2023), IET Intell. Transp.
-                                        Syst., Table 4: human = Level 0,
-                                        AV = Level 5.
-idm_acc        IDM           ACC        Standard "human = IDM, AV = ACC" pair.
-eidm_acc       EIDM          ACC        As above, but the human model is SUMO's
-                                        Extended IDM (adds driver imperfection).
-idm_cacc       IDM           CACC       Cooperative ACC. EXPERIMENTAL -- see below.
-
-Design choices (so the comparison isolates the CONTROL LAW, not hardware):
-  * For the IDM/EIDM/ACC/CACC sets, human and AV share the same physical
-    limits: accel 2.6, decel 4.5, minGap 2.5, maxSpeed 16.6. These equal SUMO's
-    default vehicle values and the Level-0 row of Sadid & Antoniou (2023).
-  * The only difference between human and AV is the model and the desired time
-    headway `tau`. AV headway defaults to 1.3 s, the value used for ACC/CACC
-    vehicles in Syed & Hasan (2023), arXiv:2311.06267 (after Rahman et al.,
-    2021, Transp. Res. C 128). Override with --av-tau to run a sensitivity
-    study (e.g. 0.8, 1.0, 1.3). NOTE: a 1.3 s headway is LONGER than the human
-    1.0 s, so ACC may well do worse than humans at signals. That is a finding
-    to report, not a bug -- but it is a modelling assumption, so test it.
-  * ACC/CACC controller gains are left at SUMO's defaults. SUMO's ACC and CACC
-    follow Milanes & Shladover (2014, Transp. Res. C 48) and Xiao, Wang & van
-    Arem (2017). Gain values in the literature are inconsistent (Syed & Hasan
-    2023 compare three sets), so overriding them without calibration data would
-    be guesswork.
-  * CACC caveats from the SUMO docs and from Syed & Hasan (2023): SUMO's CACC
-    is "primarily intended for use in specific traffic situations", is known to
-    collide at the default 1 s step, and gave highly unstable results in their
-    freeway study. A CACC vehicle only uses cooperative mode behind another
-    CACC vehicle; behind a human it behaves like ACC. Treat idm_cacc as an
-    exploratory upper bound and check its collision and unfinished-trip counts.
-  * A more conservative near-term-CAV Krauss alternative (not run by default) is
-    Amini et al. (2023), arXiv:2301.11083, Table 3: HDV minGap 2.5, accel 2.6,
-    decel 4.5, sigma 0.5, tau 1.0, lcAssertive 1.3; CAV minGap 1.5, accel 3.5,
-    decel 4.5, sigma 0, tau 0.9, lcAssertive 0.7.
+Set            human model   AV model
+-------------------------------------
+krauss         Krauss        Krauss   
+idm_acc        IDM           ACC        
+eidm_acc       EIDM          ACC        
+                                        
+idm_cacc       IDM           CACC      
 """
 
-SIM_PHYSICS = dict(
-    vClass="passenger", accel="2.6", decel="4.5", minGap="2.5", maxSpeed="16.6",
-)
+SIM_PHYSICS_PASSENGER = dict(vClass="passenger", accel="2.786", decel="7.424", minGap="2.377", maxSpeed="16.6", sigma="0.292", tau="1.001", speedFactor="1.193", speedDev="0.091", lcSpeedGain="0.887", lcKeepRight="0.835", lcAssertive="1.616")
+SIM_PHYSICS_MOTORCYCLE = dict(vClass="motorcycle", accel="5.994", decel="9.848", minGap="2.506", maxSpeed="16.6", sigma="0.439", tau="1.038", speedFactor="1.073", speedDev="0.134", lcSpeedGain="1.0391", lcKeepRight="1.956", lcAssertive="1.057")
+SIM_PHYSICS_TRUCK = dict(vClass="truck", accel="1.285", decel="3.820", minGap="2.136", maxSpeed="16.6", sigma="0.186", tau="1.775", speedFactor="1.043", speedDev="0.104", lcSpeedGain="0.985", lcKeepRight="1.696", lcAssertive="1.001")
+SIM_PHYSICS_TRAILER = dict(vClass="trailer", accel="1.186", decel="4.013", minGap="2.181", maxSpeed="16.6", sigma="0.008", tau="3.471", speedFactor="0.866", speedDev="0.025", lcSpeedGain="0.967", lcKeepRight="1.977", lcAssertive="1.157")
 
-# model_set -> (human car-following model, AV car-following model)
+HUMAN_CLASSES = {
+    "human_passenger": SIM_PHYSICS_PASSENGER,
+    "human_motorcycle": SIM_PHYSICS_MOTORCYCLE,
+    "human_truck": SIM_PHYSICS_TRUCK,
+    "human_trailer": SIM_PHYSICS_TRAILER,
+}
+
 MODEL_SETS = {
     "krauss":   ("Krauss", "Krauss"),
     "idm_acc":  ("IDM",    "ACC"),
@@ -58,27 +35,38 @@ MODEL_SETS = {
 
 DEFAULT_AV_TAU = {
     "krauss": 0.6,
-    "idm_acc": 1.3,
-    "eidm_acc": 1.3,
-    "idm_cacc": 1.3,
+    "idm_acc": 1.5,   # Increased base to test conservative AV behavior
+    "eidm_acc": 1.5,
+    "idm_cacc": 1.5,
 }
 
-
 def get_vtypes(model_set, av_tau=None):
-    """Returns (human_vtype, av_vtype, effective_av_tau) as attribute dicts."""
+    """Returns (human_vtypes_dict, av_vtype, effective_av_tau)."""
     if model_set not in MODEL_SETS:
-        raise ValueError(f"unknown model set {model_set!r}; choose from {list(MODEL_SETS)}")
+        raise ValueError(f"unknown model set {model_set!r}")
     human_cf, av_cf = MODEL_SETS[model_set]
     tau = DEFAULT_AV_TAU[model_set] if av_tau is None else av_tau
 
+    human_vtypes = {}
+    for type_id, physics in HUMAN_CLASSES.items():
+        params = dict(physics)
+        params["id"] = type_id
+        params["carFollowModel"] = "Krauss" if human_cf == "Krauss" else human_cf
+        human_vtypes[type_id] = params
+
+    # AV uses passenger dynamics but with precise control and conservative lane changes
+    av_physics = dict(SIM_PHYSICS_PASSENGER)
+    av_physics.update({
+        "id": "AV",
+        "carFollowModel": "Krauss" if av_cf == "Krauss" else av_cf,
+        "tau": f"{tau:g}",
+        "sigma": "0.0",
+        "color": "0,0.8,0",
+        "lcAssertive": "0.7",  # Lower assertiveness = safer/conservative lane changing
+        "lcSpeedGain": "0.5"   # Less likely to change lanes just for speed
+    })
+    
     if model_set == "krauss":
-        human = dict(id="human", carFollowModel="Krauss", sigma="0.5", tau="1.0",
-                     color="0.6,0.6,0.6", **SIM_PHYSICS)
-        av = dict(SIM_PHYSICS, id="AV", carFollowModel="Krauss", sigma="0.0",
-                  tau=f"{tau:g}", accel="3.8", minGap="0.5", color="0,0.8,0")
-    else:
-        human = dict(id="human", carFollowModel=human_cf, tau="1.0",
-                     color="0.6,0.6,0.6", **SIM_PHYSICS)
-        av = dict(id="AV", carFollowModel=av_cf, tau=f"{tau:g}",
-                  color="0,0.8,0", **SIM_PHYSICS)
-    return human, av, tau
+        av_physics.update({"accel": "3.8", "minGap": "0.5"})
+
+    return human_vtypes, av_physics, tau
