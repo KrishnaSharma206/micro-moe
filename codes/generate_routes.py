@@ -15,7 +15,7 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ET
 
-from vehicle_models import MODEL_SETS, get_vtypes  # car-following model sets (see that file)
+from vehicle_models import MODEL_SETS, get_vtypes
 
 
 def run_random_trips(net_file, trips_file, end_time, period, seed):
@@ -31,26 +31,48 @@ def run_random_trips(net_file, trips_file, end_time, period, seed):
         "-p", str(period),
         "--seed", str(seed),
         "--fringe-factor", "5",
-        "--validate",  # drop trips with no valid route -- real networks can have disconnected edges
+        "--validate",
     ]
     subprocess.run(cmd, check=True)
 
 
-def assign_vehicle_types(trips_file, out_file, penetration, seed, human_vtype, av_vtype):
-    """Reads the plain trip file randomTrips.py produced, assigns each
-    vehicle a type by weighted coin flip, and writes a route file with
-    both vType definitions plus the trips."""
+def assign_vehicle_types(trips_file, out_file, penetration, seed, human_vtypes, av_vtype):
     rng = random.Random(seed)
     tree = ET.parse(trips_file)
     root = tree.getroot()
 
+    # Traffic composition from reference paper
+    HUMAN_DIST = [
+        ("human_passenger", 0.785),
+        ("human_truck", 0.143),
+        ("human_trailer", 0.069),
+        ("human_motorcycle", 0.003)
+    ]
+
+    def get_human_type():
+        r = rng.random()
+        cum = 0.0
+        for v_id, prob in HUMAN_DIST:
+            cum += prob
+            if r <= cum:
+                return v_id
+        return "human_passenger"
+
     for trip in root.findall("trip"):
-        vtype = "AV" if rng.random() < penetration else "human"
+        if rng.random() < penetration:
+            vtype = "AV"
+        else:
+            vtype = get_human_type()
         trip.set("type", vtype)
 
     new_root = ET.Element("routes")
-    ET.SubElement(new_root, "vType", human_vtype)
-    ET.SubElement(new_root, "vType", av_vtype)
+    
+    # Add all human vType definitions
+    for h_id, params in human_vtypes.items():
+        ET.SubElement(new_root, "vType", **params)
+    # Add AV vType
+    ET.SubElement(new_root, "vType", **av_vtype)
+    
     for trip in root.findall("trip"):
         new_root.append(trip)
 
@@ -60,25 +82,21 @@ def assign_vehicle_types(trips_file, out_file, penetration, seed, human_vtype, a
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--net", default="manhattan.net.xml")
-    ap.add_argument("--penetration", type=float, required=True,
-                     help="Fraction of vehicles that are AVs, e.g. 0.25")
-    ap.add_argument("--end", type=int, default=1800, help="Simulation horizon (s)")
-    ap.add_argument("--period", type=float, default=2.0,
-                     help="Mean seconds between vehicle insertions (lower = denser traffic). "
-                          "0.6 gridlocked the Manhattan network; start at 2.0 and lower it gradually.")
+    ap.add_argument("--penetration", type=float, required=True)
+    ap.add_argument("--end", type=int, default=1800)
+    ap.add_argument("--period", type=float, default=2.0)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--model-set", default="krauss", choices=list(MODEL_SETS),
-                     help="car-following models for human and AV vehicles (see vehicle_models.py)")
-    ap.add_argument("--av-tau", type=float, default=None,
-                     help="override the AV desired time headway (s) for sensitivity runs")
+    ap.add_argument("--model-set", default="krauss", choices=list(MODEL_SETS))
+    ap.add_argument("--av-tau", type=float, default=None)
     ap.add_argument("-o", "--output", required=True)
     args = ap.parse_args()
 
-    tmp_trips = f"_tmp_trips_{args.seed}_{os.getpid()}.trips.xml"  # unique per process so parallel runs never collide
+    tmp_trips = f"_tmp_trips_{args.seed}_{os.getpid()}.trips.xml"
     run_random_trips(args.net, tmp_trips, args.end, args.period, args.seed)
-    human_vtype, av_vtype, _ = get_vtypes(args.model_set, args.av_tau)
+    
+    human_vtypes, av_vtype, _ = get_vtypes(args.model_set, args.av_tau)
     assign_vehicle_types(tmp_trips, args.output, args.penetration, args.seed,
-                         human_vtype, av_vtype)
+                         human_vtypes, av_vtype)
     os.remove(tmp_trips)
     print(f"Wrote {args.output} at {args.penetration*100:.0f}% AV penetration ({args.model_set})")
 
