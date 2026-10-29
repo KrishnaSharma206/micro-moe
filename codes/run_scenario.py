@@ -28,29 +28,23 @@ def run(net_file, route_file, tripinfo_file, gui=False, max_time=3600, step_leng
         "-n", net_file,
         "-r", route_file,
         "--tripinfo-output", tripinfo_file,
-        "--tripinfo-output.write-unfinished", "true",  # keep vehicles still on the road at cutoff
+        "--tripinfo-output.write-unfinished", "true",
         "--no-step-log", "true",
         "--duration-log.disable", "true",
-        "--time-to-teleport", "-1",  # don't teleport stuck vehicles; they're a real congestion signal
-        # Car-following models can produce collisions when tau < step-length
-        # (Krauss AV tau = 0.6 s; SUMO's docs also warn CACC collides at 1 s),
-        # so the default step is 0.5 s. 'warn' keeps colliding vehicles in place rather
-        # than teleporting them, and warnings are silenced to avoid flooding
-        # the terminal; collisions are counted below instead.
+        "--time-to-teleport", "-1",
         "--step-length", str(step_length),
         "--collision.action", "warn",
         "--no-warnings", "true",
+        # NEW: Activate the emissions device for all vehicles to track environmental impact
+        "--device.emissions.probability", "1.0",
     ])
 
-    speed_samples = []      # (num_vehicles_this_step, mean_speed_this_step)
-    queue_samples = []      # halted vehicles, summed over all edges, this step
+    speed_samples = []
+    queue_samples = []
     collisions = 0
-
     edge_ids = traci.edge.getIDList()
 
     try:
-        # Hard time cap: a congested real network can gridlock and never empty,
-        # which would otherwise leave this loop running forever.
         while (traci.simulation.getMinExpectedNumber() > 0
                and traci.simulation.getTime() < max_time):
             traci.simulationStep()
@@ -66,7 +60,6 @@ def run(net_file, route_file, tripinfo_file, gui=False, max_time=3600, step_leng
     finally:
         traci.close()
 
-    # Vehicle-count-weighted average speed across the whole run
     total_veh_seconds = sum(n for n, _ in speed_samples)
     avg_speed = (
         sum(n * s for n, s in speed_samples) / total_veh_seconds
@@ -78,32 +71,42 @@ def run(net_file, route_file, tripinfo_file, gui=False, max_time=3600, step_leng
 
 
 def parse_tripinfo(tripinfo_file):
-    """Delay (timeLoss) and travel time (duration), averaged over COMPLETED
-    trips only. Trips still on the road at the time cap (arrival = -1) are
-    counted separately: a high unfinished count signals gridlock/overload."""
+    """Parses delay, travel time, and now extracts absolute fuel and CO2 emissions."""
     tree = ET.parse(tripinfo_file)
     trips = tree.getroot().findall("tripinfo")
     done = [t for t in trips if float(t.get("arrival", "-1")) >= 0]
     unfinished = len(trips) - len(done)
+    
     if not done:
-        return 0.0, 0.0, 0, unfinished
+        return 0.0, 0.0, 0, unfinished, 0.0, 0.0
+        
     avg_delay = sum(float(t.get("timeLoss")) for t in done) / len(done)
     avg_travel_time = sum(float(t.get("duration")) for t in done) / len(done)
-    return avg_delay, avg_travel_time, len(done), unfinished
+    
+    # NEW: Extract Environmental Data
+    total_fuel_ml = 0.0
+    total_co2_mg = 0.0
+    for t in done:
+        emissions = t.find("emissions")
+        if emissions is not None:
+            total_fuel_ml += float(emissions.get("fuel_abs", 0))
+            total_co2_mg += float(emissions.get("CO2_abs", 0))
+            
+    avg_fuel_ml = total_fuel_ml / len(done)
+    avg_co2_mg = total_co2_mg / len(done)
+    
+    return avg_delay, avg_travel_time, len(done), unfinished, avg_fuel_ml, avg_co2_mg
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--net", default="manhattan.net.xml")
     ap.add_argument("--route", required=True)
-    ap.add_argument("--penetration", type=float, required=True,
-                     help="Recorded in the output for later aggregation")
+    ap.add_argument("--penetration", type=float, required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--gui", action="store_true")
-    ap.add_argument("--step-length", type=float, default=0.5,
-                     help="simulation step (s); keep identical across runs you compare")
-    ap.add_argument("--max-time", type=int, default=3600,
-                     help="Stop the simulation at this time (s) even if vehicles remain")
+    ap.add_argument("--step-length", type=float, default=0.5)
+    ap.add_argument("--max-time", type=int, default=3600)
     args = ap.parse_args()
 
     tripinfo_file = args.out.replace(".json", "_tripinfo.xml")
@@ -111,7 +114,8 @@ def main():
     avg_speed, avg_queue, collisions = run(
         args.net, args.route, tripinfo_file, gui=args.gui, max_time=args.max_time,
         step_length=args.step_length)
-    avg_delay, avg_travel_time, completed, unfinished = parse_tripinfo(tripinfo_file)
+        
+    avg_delay, avg_travel_time, completed, unfinished, avg_fuel, avg_co2 = parse_tripinfo(tripinfo_file)
 
     result = {
         "penetration": args.penetration,
@@ -119,6 +123,8 @@ def main():
         "avg_speed_mps": round(avg_speed, 3),
         "avg_travel_time_s": round(avg_travel_time, 3),
         "avg_queue_length": round(avg_queue, 3),
+        "avg_fuel_ml": round(avg_fuel, 3),    # New Metric
+        "avg_co2_mg": round(avg_co2, 3),      # New Metric
         "completed_trips": completed,
         "unfinished_trips": unfinished,
         "collisions": collisions,
