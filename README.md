@@ -33,7 +33,7 @@ step is a controlled baseline of how AV penetration changes urban traffic perfor
 
 Two driver models are used for human driven cars and AVs.
 
-The parameters are:
+The parameters for a car are:
 
 | Parameter | Human | AV |
 |---|---|---|
@@ -64,28 +64,28 @@ specific to that modelling choice; the model-comparison sweep exists to test exa
 
 A few changes have been added to this simulation that makes it unique, such as:
 
-# 1. `vehicle_models.py` (Real-World Driving Dynamics)
-*   **Empirical Calibration:** The human driver models are calibrated using real-world data from the Austrian A2 motorway (including precise `sigma`, `tau`, `accel`, `decel`, and `minGap` parameters).
-*   **Heterogeneous Traffic:** The network is not filled with identical clone cars. Distinct profiles for **passenger cars, trucks, trailers, and motorcycles** have been added.
-*   **Advanced Lane-Changing:** Highly sensitive `lcAssertive` and `lcSpeedGain` parameters have been integrated. Human drivers behave like real humans—sometimes aggressively cutting in to gain speed.
-*   **The "Conservative AV" Profile:** Real AVs are programmed to be cautious. The AV lane-change assertiveness has been lowered and the baseline time headway has been increased (from 1.3s to 1.5s).
+1. `vehicle_models.py` (Real-World Driving Dynamics)
+Empirical Calibration: The human driver models are calibrated using real-world data from the Austrian A2 motorway (including precise `sigma`, `tau`, `accel`, `decel`, and `minGap` parameters).
+Heterogeneous Traffic: The network is not filled with identical clone cars. Distinct profiles for passenger cars, trucks, trailers, and motorcycles have been added.
+Advanced Lane-Changing: Highly sensitive `lcAssertive` and `lcSpeedGain` parameters have been integrated. Human drivers behave like real humans—sometimes aggressively cutting in to gain speed.
+The "Conservative AV" Profile: Real AVs are programmed to be cautious. The AV lane-change assertiveness has been lowered and the baseline time headway has been increased (from 1.3s to 1.5s).
 
-# 2. `generate_routes.py` (Realistic Traffic Generation)
-*   **Accurate Fleet Distribution:** Instead of a simple coin flip between "Human" and "AV", the script populates the human-driven segment using a real-world weighted distribution: 78.5% passenger cars, 14.3% trucks, 6.9% trailers, and 0.3% motorcycles.
-*   **Dynamic XML Mapping:** Automatically handles the complex routing of all distinct `vType` profiles into the SUMO `routes.rou.xml` file.
+2. `generate_routes.py` (Realistic Traffic Generation)
+Accurate Fleet Distribution: Instead of a simple coin flip between "Human" and "AV", the script populates the human-driven segment using a real-world weighted distribution: 78.5% passenger cars, 14.3% trucks, 6.9% trailers, and 0.3% motorcycles.
+Dynamic XML Mapping: Automatically handles the complex routing of all distinct `vType` profiles into the SUMO `routes.rou.xml` file.
 
-# 3. `sweep.py` (Automated Headway Sensitivity)
-*   **Sweep Sensitivity for Headways:** The argument parser accepts multiple AV headways simultaneously (e.g., `--av-taus 1.0 1.5 2.0`). We can now run a single automated sweep to pinpoint exactly when conservative AV programming starts hurting total network capacity.
+3. `sweep.py` (Automated Headway Sensitivity)
+Sweep Sensitivity for Headways: The argument parser accepts multiple AV headways simultaneously (e.g., `--av-taus 1.0 1.5 2.0`). We can now run a single automated sweep to pinpoint exactly when conservative AV programming starts hurting total network capacity.
 
 # Novel Research Angles
 
-Most papers focus strictly on highway throughput. Because we are looking at an **Urban ITS** and **Swarm-Based Cooperative Behavior**, we are taking this a step further with two unique metrics:
+Most papers focus strictly on highway throughput. Because we are looking at an Urban ITS and Swarm-Based Cooperative Behavior, we are taking this a step further with two unique metrics:
 
-# 1. Environmental Sustainability (Emissions & Fuel)
-Stop-and-go traffic in an urban grid (like Manhattan) destroys fuel efficiency. While other studies just look at delay, we are proving a secondary thesis: **Swarm-coordinated AVs reduce greenhouse gases.** By smoothing out shockwaves and preventing unnecessary braking, we can now explicitly track the reduction in CO2 emissions and fuel consumption.
+1. Environmental Sustainability (Emissions & Fuel)
+Stop-and-go traffic in an urban grid (like Manhattan) destroys fuel efficiency. While other studies just look at delay, we are proving a secondary thesis: Swarm-coordinated AVs reduce greenhouse gases. By smoothing out shockwaves and preventing unnecessary braking, we can now explicitly track the reduction in CO2 emissions and fuel consumption.
 
-# 2. V2X Communication Degradation (The "Urban Canyon" Effect)
-Many simulations assume automated vehicles have perfect radar and telepathy. We don't. True Swarm-Based Cooperative Adaptive Cruise Control (CACC) relies on Vehicle-to-Vehicle (V2V) wireless communication. In a city, buildings cause signal latency and packet loss. We are exploring what happens to the network when AVs lose connection and are forced to fall back to standard, non-cooperative ACC mode.
+2. V2X Communication Degradation
+Many simulations assume automated vehicles have perfect radar and telepathy. True Swarm-Based Cooperative Adaptive Cruise Control (CACC) relies on Vehicle-to-Vehicle (V2V) wireless communication. In a city, buildings cause signal latency and packet loss. We are exploring what happens to the network when AVs lose connection and are forced to fall back to standard, non-cooperative ACC mode.
 
 # Repository layout
 
